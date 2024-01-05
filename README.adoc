@@ -1,0 +1,15 @@
+= BifrostLink
+
+== Why would I want it?
+
+Sometimes, you have some dynamic environment, where exist no direct connection between grandparent and grandchild
+processes. Also, you might want to prevent some messages from being injected in such systems.
+
+I.e you want to communicate between browser page injected script and the native host:
+You can't start native extension host directly from webpage, only background script can do that.
+You can't send message from webpage, only content script can do that.
+
+And the transports betwen those components are different too!
+
+This is the usecase bifrostlink is intended to solve, it provides topology aware RPC protocol, which allows intermediate
+components to forward packets intended for other components.
