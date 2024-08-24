@@ -187,15 +187,19 @@ where
 					via.insert(rtt);
 				}
 				if let Some((initial_via, initial_rtt)) = seconded_initial {
-					if self.event.send(
-						ViaListSeconded {
-							for_connection: address.clone(),
-							initial_via: initial_via.clone(),
-							added_via: via.clone(),
-							rtt: rtt.min(initial_rtt),
-						}
-						.into(),
-					).is_err() {
+					if self
+						.event
+						.send(
+							ViaListSeconded {
+								for_connection: address.clone(),
+								initial_via: initial_via.clone(),
+								added_via: via.clone(),
+								rtt: rtt.min(initial_rtt),
+							}
+							.into(),
+						)
+						.is_err()
+					{
 						eprintln!("no listener for ViaListSeconded")
 					}
 				}
@@ -212,14 +216,18 @@ where
 						second_best: None,
 					},
 				});
-				if self.event.send(
-					ConnectionAdded {
-						to: address.clone(),
-						via: via.clone(),
-						rtt,
-					}
-					.into(),
-				).is_err() {
+				if self
+					.event
+					.send(
+						ConnectionAdded {
+							to: address.clone(),
+							via: via.clone(),
+							rtt,
+						}
+						.into(),
+					)
+					.is_err()
+				{
 					eprintln!("no listener for ConnectionAdded")
 				}
 			}
@@ -237,25 +245,33 @@ where
 		}
 		if data.via.is_empty() {
 			self.routes.remove(&address);
-			if self.event.send(
-				ConnectionRemoved {
-					to: address.clone(),
-					via: via.clone(),
-				}
-				.into(),
-			).is_err() {
+			if self
+				.event
+				.send(
+					ConnectionRemoved {
+						to: address.clone(),
+						via: via.clone(),
+					}
+					.into(),
+				)
+				.is_err()
+			{
 				eprintln!("no listener for ConnectionRemoved");
 			}
 		} else {
 			if data.via.len() == 1 {
 				let only_via = data.via.keys().next().expect("len == 1").clone();
-				if self.event.send(
-					ViaListUnseconded {
-						for_connection: address.clone(),
-						only_via,
-					}
-					.into(),
-				).is_err() {
+				if self
+					.event
+					.send(
+						ViaListUnseconded {
+							for_connection: address.clone(),
+							only_via,
+						}
+						.into(),
+					)
+					.is_err()
+				{
 					eprintln!("no listener for ConnectionRemoved");
 				}
 			}

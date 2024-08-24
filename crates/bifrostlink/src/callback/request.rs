@@ -12,4 +12,5 @@ pub(crate) trait RequestHandler<Address>: Sync + 'static + Send {
 		rid: &str,
 		respond_to: Address,
 	) -> OutgoingMessage<Address>;
+	fn cancel_safe(&self) -> bool;
 }

@@ -9,7 +9,7 @@ use crate::callback::request::RequestHandler;
 use crate::connection::{Connection, ConnectionMessage};
 use crate::error::{ErrorT, ListenerForYourRequestHasBeenDeadError, ResponseError};
 use crate::event::RootEvent;
-use crate::internal_handlers::{AddForwarded, RemoveForwarded};
+use crate::internal_handlers::{AddForwarded, CancelRequest, RemoveForwarded};
 use crate::packet::{OpaquePacketWrapper, OutgoingMessage};
 use crate::polling::notification::OpaquePollingNotification;
 use crate::polling::request::OpaquePollingRequest;
@@ -29,6 +29,7 @@ use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender as Sender;
 use tokio::sync::mpsc::{error::SendError, unbounded_channel};
 use tokio::sync::{broadcast, oneshot};
+use tokio::task::AbortHandle;
 
 pub(crate) struct RpcInner<Address: AddressT, Error: ErrorT> {
 	me: Address,
@@ -38,6 +39,8 @@ pub(crate) struct RpcInner<Address: AddressT, Error: ErrorT> {
 	tx: Sender<RootEvent<Address>>,
 	connections: Vec<Connection<Address>>,
 	request_handler: HashMap<&'static str, Arc<dyn RequestHandler<Address>>>,
+	// TODO: Should requester to be a second map key here?
+	running_requests: HashMap<String, AbortHandle>,
 
 	pub(crate) polling_request_handler:
 		HashMap<&'static str, Sender<OpaquePollingRequest<Address>>>,
@@ -50,19 +53,52 @@ pub(crate) struct RpcInner<Address: AddressT, Error: ErrorT> {
 
 	responses: HashMap<ResponseId, oneshot::Sender<Result<Bytes, Error>>>,
 }
+
+pub struct CancelRequestGuard<Address: AddressT> {
+	me: Address,
+	to: Address,
+	rid: String,
+	tx: tokio::sync::mpsc::UnboundedSender<RootEvent<Address>>,
+	defused: bool,
+}
+impl<Address: AddressT> CancelRequestGuard<Address> {
+	pub fn defuse(&mut self) {
+		self.defused = true;
+	}
+}
+impl<Address: AddressT> Drop for CancelRequestGuard<Address> {
+	fn drop(&mut self) {
+		if self.defused {
+			return;
+		};
+
+		let _ = self.tx.send(
+			OutgoingMessage::new_notification(
+				self.me.clone(),
+				self.to.clone(),
+				&CancelRequest {
+					rid: self.rid.clone(),
+				},
+			)
+			.into(),
+		);
+	}
+}
+
 impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
-	// TODO: Implement callback handler on top of polling
 	fn register_request_handler<R, F>(
 		&mut self,
+		cancellable: bool,
 		handler: impl Fn(Address, R) -> F + Sync + Send + 'static,
 	) where
 		Error: Into<ResponseError> + ErrorT,
 		R: IncomingRequest + Sync + Send + 'static,
 		R::Response: Serialize,
-		F: Future<Output = Result<R::Response, Error>> + Sync + Send + 'static,
+		F: Future<Output = Result<R::Response, Error>> + Send + 'static,
 	{
 		struct CallbackRequestHandler<R, F, H, Address, Error> {
 			handler: Box<H>,
+			cancellable: bool,
 			_marker: PhantomData<fn(R, F, Address, Error)>,
 		}
 		#[async_trait]
@@ -71,11 +107,14 @@ impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
 		where
 			R: IncomingRequest + Send + Sync + 'static,
 			R::Response: Serialize,
-			F: Future<Output = Result<R::Response, Error>> + Send + Sync + 'static,
+			F: Future<Output = Result<R::Response, Error>> + Send + 'static,
 			H: Fn(Address, R) -> F + Send + Sync + 'static,
 			Address: AddressT + 'static,
 			Error: Send + Sync + 'static,
 		{
+			fn cancel_safe(&self) -> bool {
+				self.cancellable
+			}
 			async fn handle(
 				&self,
 				packet_source: Address,
@@ -108,6 +147,7 @@ impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
 			Entry::Occupied(_) => panic!("request handler is already defined"),
 			Entry::Vacant(v) => v.insert(Arc::new(CallbackRequestHandler {
 				handler: Box::new(handler),
+				cancellable,
 				_marker: PhantomData,
 			})),
 		};
@@ -205,23 +245,41 @@ impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
 		};
 	}
 
+	// If CancelRequestGuard is dropped, then the inflight request is
+	// cancelled; Sender is removed, and remote server will receive request
+	// cancellation message.
 	pub fn request<T>(
 		&mut self,
 		to: Address,
 		request: &T,
-	) -> oneshot::Receiver<Result<Bytes, Error>>
+	) -> (
+		oneshot::Receiver<Result<Bytes, Error>>,
+		CancelRequestGuard<Address>,
+	)
 	where
 		T: OutgoingRequest,
 		T::Response: DeserializeOwned,
 	{
 		let id = uuid::Uuid::new_v4().to_string();
 		let (complete, pending) = oneshot::channel();
+		// TODO: If request target is dead, all the responses for it should be dropped.
 		self.responses.insert(ResponseId(id.clone()), complete);
 		self.tx
-			.send(OutgoingMessage::new_request(self.me.clone(), to, id, request).into())
+			.send(
+				OutgoingMessage::new_request(self.me.clone(), to.clone(), id.clone(), request)
+					.into(),
+			)
 			.expect("not closed");
-		// TODO: timeouts
-		pending
+		(
+			pending,
+			CancelRequestGuard {
+				me: self.me.clone(),
+				tx: self.tx.clone(),
+				to,
+				rid: id.clone(),
+				defused: false,
+			},
+		)
 	}
 	fn respond_with_error(&mut self, rid: &str, to: Address, error: &str) {
 		self.tx
@@ -279,6 +337,16 @@ async fn handle_connection_message<Address, Error>(
 			request_origin,
 			error,
 		} => {
+			if !inner.read().expect("read").set.may_be_forwarder_for(
+				Via::Address(input.packet_source.clone()),
+				request_origin.clone(),
+			) {
+				eprintln!(
+					"messages from {:?} should not be forwarded through {:?}",
+					request_origin, input.packet_source,
+				);
+				return;
+			}
 			if request_origin == &me {
 				let mut read = inner.write().expect("read");
 				read.complete_response(
@@ -290,7 +358,15 @@ async fn handle_connection_message<Address, Error>(
 				);
 				return;
 			}
-			todo!()
+			let inner = inner.write().expect("write");
+			let Some(forwarder) = inner.forwarder_for(request_origin.clone(), &HashSet::new())
+			else {
+				eprintln!("could not forward packet: {opaque:?}");
+				return;
+			};
+			if forwarder.sender.send(input.message.clone()).is_err() {
+				eprintln!("failed to forward");
+			};
 		}
 		OpaquePacketWrapper::Request {
 			sender,
@@ -324,14 +400,32 @@ async fn handle_connection_message<Address, Error>(
 					if let Some(handler) = request_handler {
 						let sender = sender.clone();
 						let message = input.message.clone();
-						tokio::task::spawn(async move {
-							let response = handler
-								.handle(sender.clone(), message, &response.rid, sender.clone())
-								.await;
-							if tx.send(response.into()).is_err() {
-								eprintln!("failed to send response");
-							};
+						let cancel_safe = handler.cancel_safe();
+						let rid = response.rid.clone();
+						let task = tokio::task::spawn({
+							let inner = inner.clone();
+							async move {
+								let response_msg = handler
+									.handle(sender.clone(), message, &response.rid, sender.clone())
+									.await;
+								if tx.send(response_msg.into()).is_err() {
+									eprintln!("failed to send response");
+								};
+								inner
+									.write()
+									.expect("write")
+									.running_requests
+									.remove(&response.rid);
+							}
 						});
+						if cancel_safe {
+							let handle = task.abort_handle();
+							inner
+								.write()
+								.expect("write")
+								.running_requests
+								.insert(rid, handle);
+						}
 					// TODO: timeout/cancel
 					} else if let Some(polling_handler) = polling_handler {
 						let ptx = polling_handler.clone();
@@ -496,15 +590,16 @@ where
 {
 	pub fn register_request_handler<
 		R: IncomingRequest + Sync + Send + 'static,
-		F: Future<Output = Result<R::Response, Error>> + Sync + Send + 'static,
+		F: Future<Output = Result<R::Response, Error>> + Send + 'static,
 	>(
 		&self,
+		cancellable: bool,
 		handler: impl Fn(Address, R) -> F + Sync + Send + 'static,
 	) where
 		R::Response: Serialize,
 	{
 		let mut inner = self.inner.write().expect("write");
-		inner.register_request_handler(handler)
+		inner.register_request_handler(cancellable, handler)
 	}
 	pub fn register_notification_handler<
 		R: IncomingNotification,
@@ -682,6 +777,7 @@ where
 			tx: etx,
 			request_handler: Default::default(),
 			polling_request_handler: Default::default(),
+			running_requests: HashMap::new(),
 			notification_handler: Default::default(),
 			polling_notification_handler: Default::default(),
 			responses: Default::default(),
@@ -695,8 +791,8 @@ where
 			inner: inner.clone(),
 		};
 
-		let inner = inner.clone();
-		rpc.register_blocking_notification_handler(
+		rpc.register_blocking_notification_handler({
+			let inner = inner.clone();
 			move |source: Address, add: AddForwarded<Address>| {
 				eprintln!("{source:?} added forwarded {add:?}");
 				let inner = inner.clone();
@@ -709,8 +805,22 @@ where
 					inner.set.inc(add.to, Via::Address(source), add.rtt);
 					Ok(())
 				}
-			},
-		);
+			}
+		});
+		rpc.register_blocking_notification_handler({
+			let inner = inner.clone();
+			move |_source: Address, cancel: CancelRequest| {
+				let inner = inner.clone();
+				async move {
+					let mut inner = inner.write().expect("write");
+					if let Some(handle) = inner.running_requests.remove(&cancel.rid) {
+						handle.abort();
+					}
+
+					Ok(())
+				}
+			}
+		});
 
 		rpc
 	}
@@ -735,7 +845,7 @@ where
 	where
 		T::Response: DeserializeOwned,
 	{
-		let ch = {
+		let (ch, _cancel_guard) = {
 			let mut inner = self.inner.write().expect("read");
 			inner.request(to, request)
 		};
@@ -746,7 +856,8 @@ where
 				Err(e) => Err(From::from(e)),
 			},
 			Ok(Err(e)) => Err(e),
-			Err(e) => Err(e.into()),
+			// Request was dropped for some reason.
+			Err(_) => Err(From::from(ListenerForYourRequestHasBeenDeadError)),
 		}
 	}
 

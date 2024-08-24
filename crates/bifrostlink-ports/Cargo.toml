@@ -1,0 +1,10 @@
+[package]
+name = "bifrostlink-ports"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bifrostlink = { version = "0.1.0", path = "../bifrostlink" }
+bytes = "1.7.1"
+tokio = { version = "1.39.2", features = ["net"] }
+tracing = "0.1.40"

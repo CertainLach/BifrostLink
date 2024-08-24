@@ -18,4 +18,3 @@ pub trait OutgoingNotification: Notification + Serialize {}
 impl<N: Notification + Serialize> OutgoingNotification for N {}
 pub trait IncomingNotification: Notification + DeserializeOwned {}
 impl<N: Notification + DeserializeOwned> IncomingNotification for N {}
-

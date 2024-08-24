@@ -81,6 +81,9 @@ where
 pub(crate) enum OpaquePacketWrapper<Address> {
 	Response {
 		rid: String,
+		// It is possible to only have `rid` field,
+		// but it makes it important for the whole bifrost network to generate really unique response ids,
+		// while with it, every requester will handle this on its own.
 		request_origin: Address,
 		error: Option<String>,
 	},

@@ -1,7 +1,5 @@
 use std::fmt::Display;
 
-use tokio::sync::oneshot::error::RecvError;
-
 #[derive(Debug)]
 pub struct ResponseError(pub String);
 #[derive(Debug)]
@@ -15,7 +13,6 @@ pub trait ErrorT:
 	+ From<ResponseError>
 	+ Into<ResponseError>
 	+ From<serde_json::Error>
-	+ From<RecvError>
 	+ From<ListenerForYourRequestHasBeenDeadError>
 {
 }

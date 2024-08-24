@@ -53,3 +53,9 @@ where
 		})
 	}
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct CancelRequest {
+	pub(crate) rid: String,
+}
+notification!(CancelRequest);
