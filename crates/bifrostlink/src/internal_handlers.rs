@@ -1,9 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-	notification,
-	route::{MinRttUpdated, Rtt, Via},
-	AddressT,
+	notification, packet::RequestId, route::{MinRttUpdated, Rtt, Via}, AddressT
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -56,6 +54,6 @@ where
 
 #[derive(Serialize, Deserialize)]
 pub struct CancelRequest {
-	pub(crate) rid: String,
+	pub(crate) rid: RequestId,
 }
 notification!(CancelRequest);

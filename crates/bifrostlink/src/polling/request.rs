@@ -15,18 +15,18 @@ use crate::{
 	error::ErrorT,
 	packet::OutgoingMessage,
 	rpc::{Rpc, WeakRpc},
-	AddressT, IncomingRequest, Request,
+	AddressT, Config, ConfigExt, IncomingRequest, Request,
 };
 
 #[must_use]
-pub(crate) struct OpaquePollingRequest<Address: AddressT> {
-	pub from: Address,
+pub(crate) struct OpaquePollingRequest<C: Config> {
+	pub from: C::Address,
 	pub id: String,
 	pub request: Option<Bytes>,
-	pub respond: Option<oneshot::Sender<OutgoingMessage<Address>>>,
+	pub respond: Option<oneshot::Sender<OutgoingMessage<C::Address>>>,
 }
-impl<Address: AddressT> OpaquePollingRequest<Address> {
-	fn respond_raw(&mut self, out: OutgoingMessage<Address>) {
+impl<C: Config> OpaquePollingRequest<C> {
+	fn respond_raw(&mut self, out: OutgoingMessage<C::Address>) {
 		match self.respond.take().expect("didn't responded yet").send(out) {
 			Ok(()) => {}
 			Err(_) => {
@@ -38,17 +38,13 @@ impl<Address: AddressT> OpaquePollingRequest<Address> {
 		self.respond.is_none()
 	}
 }
-impl<Address: AddressT> OpaquePollingRequest<Address> {
+impl<C: Config> OpaquePollingRequest<C> {
 	pub(crate) fn respond_ok<R: Serialize>(mut self, response: R) {
-		self.respond_raw(OutgoingMessage::new_response(
-			&self.id,
-			self.from.clone(),
-			&response,
-		))
+		self.respond_raw(C::encode_response(self.id.clone(), self.from.clone(), &response))
 	}
 	pub(crate) fn respond_err<E: Display>(mut self, response: E) {
-		self.respond_raw(OutgoingMessage::new_error_response(
-			&self.id,
+		self.respond_raw(C::encode_error_response(
+			self.id.clone(),
 			self.from.clone(),
 			response,
 		))
@@ -60,10 +56,10 @@ impl<Address: AddressT> OpaquePollingRequest<Address> {
 		}
 	}
 }
-impl<Address: AddressT> OpaquePollingRequest<Address> {
+impl<C: Config> OpaquePollingRequest<C> {
 	pub(crate) fn into_typed<R: IncomingRequest>(
 		mut self,
-	) -> Result<PollingRequest<R, Address>, (serde_json::Error, Self)>
+	) -> Result<PollingRequest<R, C>, (serde_json::Error, Self)>
 	where
 		R::Response: Serialize,
 	{

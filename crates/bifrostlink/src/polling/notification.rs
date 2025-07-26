@@ -9,22 +9,18 @@ use tokio::{
 };
 
 use crate::{
-	error::ErrorT,
 	rpc::{Rpc, RpcInner, WeakRpc},
-	AddressT, IncomingNotification, Notification,
+	Config, IncomingNotification, Notification,
 };
 
-pub(crate) struct OpaquePollingNotification<Address> {
-	pub from: Address,
+pub(crate) struct OpaquePollingNotification<C: Config> {
+	pub from: C::Address,
 	pub request: Bytes,
 }
-impl<Address> OpaquePollingNotification<Address>
-where
-	Address: AddressT,
-{
+impl<C: Config> OpaquePollingNotification<C> {
 	pub(crate) fn into_typed<R: IncomingNotification>(
 		self,
-	) -> Result<PollingNotification<R, Address>, serde_json::Error> {
+	) -> Result<PollingNotification<R, C>, serde_json::Error> {
 		let request = match serde_json::from_slice(&self.request) {
 			Ok(v) => v,
 			Err(e) => return Err(e),
@@ -35,12 +31,12 @@ where
 		})
 	}
 }
-pub struct PollingNotification<R: Notification, Address> {
-	from: Address,
+pub struct PollingNotification<R: Notification, C: Config> {
+	from: C::Address,
 	request: R,
 }
-impl<N: Notification, Address> PollingNotification<N, Address> {
-	pub fn from(&self) -> &Address {
+impl<N: Notification, C: Config> PollingNotification<N, C> {
+	pub fn from(&self) -> &C::Address {
 		&self.from
 	}
 	pub fn data(&self) -> &N {
@@ -48,15 +44,13 @@ impl<N: Notification, Address> PollingNotification<N, Address> {
 	}
 }
 
-struct PollingNotificationStream<Address: AddressT, Error: ErrorT, N: Notification> {
-	rpc: WeakRpc<Address, Error>,
+struct PollingNotificationStream<C: Config, N: Notification> {
+	rpc: WeakRpc<C>,
 	// name: &'static str,
-	channel: Receiver<PollingNotification<N, Address>>,
+	channel: Receiver<PollingNotification<N, C>>,
 }
-impl<Address: AddressT, Error: ErrorT, N: Notification> Stream
-	for PollingNotificationStream<Address, Error, N>
-{
-	type Item = PollingNotification<N, Address>;
+impl<C: Config, N: Notification> Stream for PollingNotificationStream<C, N> {
+	type Item = PollingNotification<N, C>;
 
 	fn poll_next(
 		mut self: Pin<&mut Self>,
@@ -65,9 +59,7 @@ impl<Address: AddressT, Error: ErrorT, N: Notification> Stream
 		self.channel.poll_recv(cx)
 	}
 }
-impl<Address: AddressT, Error: ErrorT, N: Notification> Drop
-	for PollingNotificationStream<Address, Error, N>
-{
+impl<C: Config, N: Notification> Drop for PollingNotificationStream<C, N> {
 	fn drop(&mut self) {
 		if let Some(rpc) = self.rpc.clone().upgrade() {
 			rpc.unregister_polling_notification_handler::<N>();
@@ -75,10 +67,10 @@ impl<Address: AddressT, Error: ErrorT, N: Notification> Drop
 	}
 }
 
-impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
+impl<C: Config> RpcInner<C> {
 	fn register_polling_notification_handler<R: Notification + DeserializeOwned + 'static>(
 		&mut self,
-	) -> Receiver<PollingNotification<R, Address>> {
+	) -> Receiver<PollingNotification<R, C>> {
 		let (otx, mut orx) = unbounded_channel();
 		match self.polling_notification_handler.entry(R::name()) {
 			Entry::Occupied(_) => panic!("request handler is already defined"),
@@ -94,7 +86,7 @@ impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
 							break;
 						};
 						let r = req.request.clone();
-						let request: PollingNotification<R, Address> = match req.into_typed() {
+						let request: PollingNotification<R, C> = match req.into_typed() {
 							Ok(r) => r,
 							Err(e) => {
 								eprintln!("failed to decode notification: {e}\n{:?}", String::from_utf8_lossy(&r));
@@ -116,18 +108,14 @@ impl<Address: AddressT, Error: ErrorT> RpcInner<Address, Error> {
 		rx
 	}
 }
-impl<Address, Error> Rpc<Address, Error>
-where
-	Address: AddressT,
-	Error: ErrorT,
-{
+impl<C: Config> Rpc<C> {
 	pub fn unregister_polling_notification_handler<N: Notification + Send + 'static>(&self) {
 		let mut inner = self.inner.write().expect("write");
 		inner.polling_notification_handler.remove(N::name());
 	}
 	pub fn register_polling_notification_handler<R: Notification + DeserializeOwned + 'static>(
 		&self,
-	) -> Receiver<PollingNotification<R, Address>> {
+	) -> Receiver<PollingNotification<R, C>> {
 		let mut inner = self.inner.write().expect("write");
 		inner.register_polling_notification_handler()
 	}

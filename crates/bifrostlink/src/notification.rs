@@ -1,6 +1,6 @@
 use serde::{de::DeserializeOwned, Serialize};
 
-pub trait Notification: Send + Sync + 'static {
+pub trait Notification {
 	fn name() -> &'static str;
 }
 #[macro_export]
@@ -18,3 +18,12 @@ pub trait OutgoingNotification: Notification + Serialize {}
 impl<N: Notification + Serialize> OutgoingNotification for N {}
 pub trait IncomingNotification: Notification + DeserializeOwned {}
 impl<N: Notification + DeserializeOwned> IncomingNotification for N {}
+
+impl<T> Notification for &T
+where
+	T: Notification,
+{
+	fn name() -> &'static str {
+		T::name()
+	}
+}

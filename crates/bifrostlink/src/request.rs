@@ -1,5 +1,3 @@
-use serde::{de::DeserializeOwned, Serialize};
-
 pub trait Request: Send + Sync + 'static {
 	type Response;
 	fn name() -> &'static str;
@@ -16,28 +14,9 @@ macro_rules! request {
 	};
 }
 
-pub trait IncomingRequest: Request + DeserializeOwned
-where
-	<Self as Request>::Response: Serialize,
-{
-}
-impl<T> IncomingRequest for T
-where
-	T: Request + DeserializeOwned,
-	T::Response: Serialize,
-{
-}
-pub trait OutgoingRequest: Request + Serialize
-where
-	<Self as Request>::Response: DeserializeOwned,
-{
-}
-impl<T> OutgoingRequest for T
-where
-	T: Request + Serialize,
-	T::Response: DeserializeOwned,
-{
-}
+pub trait IncomingRequest: Request {}
+pub trait OutgoingRequest: Request {}
+impl<T> OutgoingRequest for T where T: Request {}
 
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub(crate) struct ResponseId(pub String);
