@@ -5,7 +5,7 @@ use std::process::Stdio;
 use bifrostlink::Port;
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::process::{ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStdout, Command};
 use tokio::task::spawn_blocking;
 use tokio::{join, spawn};
 use tracing::{debug, error};
@@ -48,6 +48,7 @@ fn write_bytes_sync<W: Write>(mut stdin: W, msg: Bytes) -> io::Result<()> {
 	})?;
 	let len = u32::to_be_bytes(len);
 	stdin.write_all(&len)?;
+	stdin.write_all(&msg)?;
 	Ok(())
 }
 async fn write_bytes<W: AsyncWrite>(stdin: W, msg: Bytes) -> io::Result<()> {
@@ -60,6 +61,7 @@ async fn write_bytes<W: AsyncWrite>(stdin: W, msg: Bytes) -> io::Result<()> {
 	})?;
 	let len = u32::to_be_bytes(len);
 	stdin.write_all(&len).await?;
+	stdin.write_all(&msg).await?;
 	Ok(())
 }
 fn read_bytes_sync<R: Read>(mut stdout: R) -> io::Result<BytesMut> {
