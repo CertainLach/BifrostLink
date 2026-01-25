@@ -1,45 +1,38 @@
 {
   description = "Bifrostlink";
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs";
+    nixpkgs.url = "github:nixos/nixpkgs/release-25.11";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = {
-    nixpkgs,
-    flake-utils,
-    rust-overlay,
-    ...
-  }:
+  outputs =
+    {
+      nixpkgs,
+      flake-utils,
+      rust-overlay,
+      ...
+    }:
     flake-utils.lib.eachDefaultSystem (
-      system: let
+      system:
+      let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [rust-overlay.overlays.default];
+          overlays = [ rust-overlay.overlays.default ];
         };
-        rust =
-          (pkgs.rustChannelOf {
-            date = "2024-08-20";
-            channel = "nightly";
-          })
-          .default
-          .override {
-            extensions = ["rust-src" "miri" "rust-analyzer"];
-          };
-      in {
+        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+      in
+      {
         devShell = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             rust
             cargo-edit
-            cargo-asm
             cargo-outdated
             lld
             hyperfine
             valgrind
-            kcachegrind
             graphviz
             cargo-release
             rustPlatform.bindgenHook
