@@ -1,11 +1,13 @@
 [package]
 name = "bifrostlink-macros"
-version = "0.1.0"
+description = "Codegen helper for bifrostlink"
+version.workspace = true
 edition = "2021"
 
 [dependencies]
-proc-macro2 = "1.0.94"
-syn = "2.0.100"
+proc-macro2.workspace = true
+quote.workspace = true
+syn = { workspace = true, features = ["full"] }
 
 [lib]
 proc-macro = true
