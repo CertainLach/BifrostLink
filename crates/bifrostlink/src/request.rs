@@ -1,20 +1,21 @@
 pub trait Request: Send + Sync + 'static {
 	type Response;
-	fn name() -> &'static str;
+	fn name() -> u16;
 }
 #[macro_export]
 macro_rules! request {
-	($name:ident => $response:ty) => {
+	(($id:literal) $name:ident => $response:ty) => {
 		impl $crate::Request for $name {
 			type Response = $response;
-			fn name() -> &'static str {
-				stringify!($name)
+			fn name() -> u16 {
+				$id
 			}
 		}
 	};
 }
 
 pub trait IncomingRequest: Request {}
+impl<T> IncomingRequest for T where T: Request {}
 pub trait OutgoingRequest: Request {}
 impl<T> OutgoingRequest for T where T: Request {}
 

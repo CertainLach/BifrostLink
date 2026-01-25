@@ -1,14 +1,14 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 pub trait Notification {
-	fn name() -> &'static str;
+	fn name() -> u16;
 }
 #[macro_export]
 macro_rules! notification {
-	($name:ident $(<$($generic:ident $(: $bound:ident)?),+ $(,)?>)?) => {
+	(($id:literal )$name:ident $(<$($generic:ident $(: $bound:ident)?),+ $(,)?>)?) => {
 		impl $(<$($generic $(: $bound)?),+>)? $crate::Notification for $name $(<$($generic),+>)? {
-			fn name() -> &'static str {
-				stringify!($name)
+			fn name() -> u16 {
+				$id
 			}
 		}
 	};
@@ -23,7 +23,7 @@ impl<T> Notification for &T
 where
 	T: Notification,
 {
-	fn name() -> &'static str {
+	fn name() -> u16 {
 		T::name()
 	}
 }

@@ -1,3 +1,5 @@
+extern crate self as bifrostlink;
+
 mod port;
 use std::{fmt, hash::Hash};
 
@@ -11,14 +13,12 @@ mod route;
 pub use route::Rtt;
 
 mod event;
-mod packet;
+pub mod packet;
 
 mod notification;
 pub use notification::{IncomingNotification, Notification, OutgoingNotification};
 mod request;
 pub use request::{IncomingRequest, OutgoingRequest, Request};
-
-mod declarative;
 
 mod internal_handlers;
 
@@ -31,6 +31,8 @@ mod rpc;
 pub use rpc::{Rpc, WeakRpc};
 
 pub mod error;
+
+pub mod declarative;
 
 // pub use polling::notification::PollingNotification;
 
@@ -53,13 +55,13 @@ pub trait Config: 'static {
 		data_with_headers: Bytes,
 	) -> Result<(OpaquePacketWrapper<Self::Address>, Self::EncodedData), Self::Error>;
 
-	fn decode_data<T>(data: Self::EncodedData) -> Result<T, Self::Error>;
+	fn decode_data<T: DeserializeOwned>(data: Self::EncodedData) -> Result<T, Self::Error>;
 
-	fn encode_data<T>(headers: OpaquePacketWrapper<Self::Address>, data: T) -> Bytes;
+	fn encode_data<T: Serialize>(headers: OpaquePacketWrapper<Self::Address>, data: T) -> Bytes;
 }
 
 pub trait ConfigExt: Config {
-	fn encode_outgoing<T>(
+	fn encode_outgoing<T: Serialize>(
 		headers: OpaquePacketWrapper<Self::Address>,
 		value: T,
 	) -> OutgoingMessage<Self::Address> {
@@ -81,7 +83,7 @@ pub trait ConfigExt: Config {
 			OpaquePacketWrapper::Request {
 				sender,
 				receiver,
-				request: T::name().to_owned(),
+				request: T::name(),
 				response: None,
 			},
 			notification,
@@ -119,7 +121,7 @@ pub trait ConfigExt: Config {
 			data,
 		)
 	}
-	fn encode_request<T: OutgoingRequest>(
+	fn encode_request<T: OutgoingRequest + Serialize>(
 		sender: Self::Address,
 		receiver: Self::Address,
 		rid: RequestId,

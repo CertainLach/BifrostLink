@@ -24,6 +24,7 @@ use async_trait::async_trait;
 use futures::Future;
 use serde::Serialize;
 
+use serde::de::DeserializeOwned;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender as Sender;
 use tokio::sync::{broadcast, oneshot};
@@ -36,13 +37,13 @@ pub(crate) struct RpcInner<C: Config> {
 	abort: AbortOnDrop,
 	tx: Sender<RootEvent<C::Address>>,
 	connections: Vec<Connection<C::Address>>,
-	request_handler: HashMap<&'static str, Arc<dyn RequestHandler<C>>>,
+	request_handler: HashMap<u16, Arc<dyn RequestHandler<C>>>,
 	// TODO: Should requester to be a second map key here?
 	running_requests: HashMap<(C::Address, RequestId), AbortHandle>,
 
 	// pub(crate) polling_request_handler:
 	// 	HashMap<&'static str, Sender<OpaquePollingRequest<C::Address>>>,
-	notification_handler: HashMap<&'static str, Arc<dyn NotificationHandler<C>>>,
+	notification_handler: HashMap<u16, Arc<dyn NotificationHandler<C>>>,
 	// pub(crate) polling_notification_handler:
 	// 	HashMap<&'static str, Sender<OpaquePollingNotification<C>>>,
 	connect_tx: broadcast::Sender<C::Address>,
@@ -90,7 +91,7 @@ impl<C: Config> RpcInner<C> {
 		handler: impl Fn(C::Address, R) -> F + Sync + Send + 'static,
 	) where
 		C::Error: Into<ResponseError> + ErrorT,
-		R: IncomingRequest + Sync + Send + 'static,
+		R: IncomingRequest + Sync + Send + 'static + DeserializeOwned,
 		R::Response: Serialize,
 		F: Future<Output = Result<R::Response, C::Error>> + Send + 'static,
 	{
@@ -104,7 +105,7 @@ impl<C: Config> RpcInner<C> {
 		impl<C, R, F, H> RequestHandler<C> for CallbackRequestHandler<C, R, H>
 		where
 			C: Config,
-			R: IncomingRequest + Send + Sync + 'static,
+			R: IncomingRequest + Send + Sync + 'static + DeserializeOwned,
 			R::Response: Serialize,
 			F: Future<Output = Result<R::Response, C::Error>> + Send + 'static,
 			H: Fn(C::Address, R) -> F + Send + Sync + 'static,
@@ -165,7 +166,7 @@ impl<C: Config> RpcInner<C> {
 	}
 	fn register_notification_handler<
 		'r,
-		R: Notification + 'static,
+		R: Notification + 'static + DeserializeOwned,
 		H: AsyncFn2<C::Address, R, Output = Result<(), C::Error>> + Sync + Send + 'static,
 	>(
 		&mut self,
@@ -187,7 +188,7 @@ impl<C: Config> RpcInner<C> {
 			> NotificationHandler<C> for CallbackNotificationHandler<C, R, H>
 		where
 			C: Config,
-			R: Notification + 'static,
+			R: Notification + 'static + DeserializeOwned,
 			for<'a> H::OutputFuture: Send,
 		{
 			fn blocking(&self) -> bool {
@@ -277,7 +278,7 @@ impl<C: Config> RpcInner<C> {
 		CancelRequestGuard<C>,
 	)
 	where
-		T: OutgoingRequest,
+		T: OutgoingRequest + Serialize,
 	{
 		let last_request_id = self.last_request_id.entry(to.clone()).or_default();
 		*last_request_id += 1;
@@ -612,7 +613,7 @@ where
 	C::Error: From<serde_json::Error>,
 {
 	pub fn register_request_handler<
-		R: IncomingRequest + Sync + Send + 'static,
+		R: IncomingRequest + Sync + Send + 'static + DeserializeOwned,
 		F: Future<Output = Result<R::Response, C::Error>> + Send + 'static,
 	>(
 		&self,
@@ -865,11 +866,14 @@ where
 		inner.notify(to, notification)
 	}
 
-	pub async fn request<T: OutgoingRequest>(
+	pub async fn request<T: OutgoingRequest + Serialize>(
 		&self,
 		to: C::Address,
 		request: T,
-	) -> Result<T::Response, C::Error> {
+	) -> Result<T::Response, C::Error>
+	where
+		T::Response: DeserializeOwned,
+	{
 		let (ch, _cancel_guard) = {
 			let mut inner = self.inner.write().expect("read");
 			inner.request(to, request)

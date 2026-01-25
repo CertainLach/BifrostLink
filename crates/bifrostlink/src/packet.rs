@@ -73,9 +73,9 @@ pub struct OutgoingMessage<Address> {
 // 	}
 // }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Serialize, Debug)]
 #[serde(untagged)]
-pub(crate) enum OpaquePacketWrapper<Address> {
+pub enum OpaquePacketWrapper<Address> {
 	Response {
 		rid: RequestId,
 		response_from: Address,
@@ -88,13 +88,13 @@ pub(crate) enum OpaquePacketWrapper<Address> {
 	Request {
 		sender: Address,
 		receiver: Address,
-		request: String,
+		request: u16,
 		response: Option<ResponseTo>,
 	},
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct ResponseTo {
+pub struct ResponseTo {
 	pub(crate) rid: RequestId,
 }
 

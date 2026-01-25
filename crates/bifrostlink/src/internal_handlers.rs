@@ -9,20 +9,20 @@ pub(crate) struct AddForwarded<Address> {
 	pub(crate) to: Address,
 	pub(crate) rtt: Rtt,
 }
-notification!(AddForwarded<Address: AddressT>);
+notification!((0x0001) AddForwarded<Address: AddressT>);
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct RemoveForwarded<Address> {
 	pub(crate) to: Address,
 }
-notification!(RemoveForwarded<Address: AddressT>);
+notification!((0x0002) RemoveForwarded<Address: AddressT>);
 
 #[derive(Serialize, Deserialize)]
 pub struct UpdatedForwardedRtt<Address> {
 	pub(crate) to: Address,
 	pub(crate) rtt: Rtt,
 }
-notification!(UpdatedForwardedRtt<Address: AddressT>);
+notification!((0x0003) UpdatedForwardedRtt<Address: AddressT>);
 
 impl<Address> MinRttUpdated<Address>
 where
@@ -56,4 +56,4 @@ where
 pub struct CancelRequest {
 	pub(crate) rid: RequestId,
 }
-notification!(CancelRequest);
+notification!((0x0004) CancelRequest);
