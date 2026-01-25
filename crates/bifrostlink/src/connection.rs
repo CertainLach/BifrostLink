@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::sync::mpsc::UnboundedSender as Sender;
+use tracing::warn;
 
 use crate::{event::RootEvent, util::AbortOnDrop, AddressT, Port};
 
@@ -31,18 +32,18 @@ impl<Address: AddressT> Connection<Address> {
 					}
 					.into(),
 				) {
-					eprintln!("port to rpc sender failed: {e}");
+					warn!("port to rpc sender failed: {e}");
 					break;
 				}
 			}
-			eprintln!("port data ended");
+			warn!("port data ended");
 			if let Err(e) = output.send(
 				ConnectionEnding {
 					from: packet_source,
 				}
 				.into(),
 			) {
-				eprintln!("port to rpc ending sender failed: {e}");
+				warn!("port to rpc ending sender failed: {e}");
 			}
 		});
 		let abort = AbortOnDrop(join_handle.abort_handle());

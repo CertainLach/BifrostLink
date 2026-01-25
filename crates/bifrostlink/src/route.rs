@@ -5,6 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender as Sender;
+use tracing::warn;
 
 use crate::{event::RootEvent, AddressT};
 
@@ -118,7 +119,7 @@ where
 			)
 			.is_err()
 		{
-			eprintln!("no handlers for min rtt update")
+			warn!("no handlers for min rtt update")
 		}
 
 		self.min_rtt = new;
@@ -181,7 +182,7 @@ where
 				});
 				{
 					let Entry::Vacant(via) = data.via.entry(via.clone()) else {
-						eprintln!("added duplicate connection: {address:?} via {via:?}");
+						warn!("added duplicate connection: {address:?} via {via:?}");
 						return;
 					};
 					via.insert(rtt);
@@ -200,7 +201,7 @@ where
 						)
 						.is_err()
 					{
-						eprintln!("no listener for ViaListSeconded")
+						warn!("no listener for ViaListSeconded")
 					}
 				}
 				let via = v.key().clone();
@@ -228,7 +229,7 @@ where
 					)
 					.is_err()
 				{
-					eprintln!("no listener for ConnectionAdded")
+					warn!("no listener for ConnectionAdded")
 				}
 			}
 		}
@@ -236,11 +237,11 @@ where
 	}
 	pub fn dec(&mut self, address: Address, via: Via<Address>) {
 		let Some(data) = self.routes.get_mut(&address) else {
-			eprintln!("removed unknown connection: {address:?} via {via:?} (there is no routes to the specified address)");
+			warn!("removed unknown connection: {address:?} via {via:?} (there is no routes to the specified address)");
 			return;
 		};
 		if data.via.remove(&via).is_none() {
-			eprintln!("removed unknown connection: {address:?} via {via:?}");
+			warn!("removed unknown connection: {address:?} via {via:?}");
 			return;
 		}
 		if data.via.is_empty() {
@@ -256,7 +257,7 @@ where
 				)
 				.is_err()
 			{
-				eprintln!("no listener for ConnectionRemoved");
+				warn!("no listener for ConnectionRemoved");
 			}
 		} else {
 			if data.via.len() == 1 {
@@ -272,7 +273,7 @@ where
 					)
 					.is_err()
 				{
-					eprintln!("no listener for ConnectionRemoved");
+					warn!("no listener for ConnectionRemoved");
 				}
 			}
 			data.update_min_rtt(address.clone(), &mut self.event);
@@ -281,11 +282,11 @@ where
 	}
 	pub fn update(&mut self, address: Address, via: Via<Address>, rtt: Rtt) {
 		let Some(data) = self.routes.get_mut(&address) else {
-			eprintln!("updated rtt for unknown connection");
+			warn!("updated rtt for unknown connection");
 			return;
 		};
 		let Some(viartt) = data.via.get_mut(&via) else {
-			eprintln!("updated rtt for unknown connection");
+			warn!("updated rtt for unknown connection");
 			return;
 		};
 		*viartt = rtt;

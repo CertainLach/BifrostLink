@@ -29,6 +29,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender as Sender;
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::AbortHandle;
+use tracing::warn;
 
 pub(crate) struct RpcInner<C: Config> {
 	me: C::Address,
@@ -198,14 +199,14 @@ impl<C: Config> RpcInner<C> {
 				let request = match C::decode_data::<R>(request) {
 					Ok(v) => v,
 					Err(e) => {
-						eprintln!("failed to parse notification: {e}");
+						warn!("failed to parse notification: {e}");
 						return;
 					}
 				};
 				match (self.handler)(packet_source, request).await {
 					Ok(()) => {}
 					Err(err) => {
-						eprintln!("failed to handle notification: {err}");
+						warn!("failed to handle notification: {err}");
 						return;
 					}
 				}
@@ -258,11 +259,11 @@ impl<C: Config> RpcInner<C> {
 		data: Result<C::EncodedData, C::Error>,
 	) {
 		let Some(pending) = self.responses.remove(&(from, id.clone())) else {
-			eprintln!("completed already timed out request: {id:?}");
+			warn!("completed already timed out request: {id:?}");
 			return;
 		};
 		if let Err(_e) = pending.send(data) {
-			eprintln!("failed to complete response");
+			warn!("failed to complete response");
 		};
 	}
 
@@ -308,7 +309,7 @@ impl<C: Config> RpcInner<C> {
 	}
 	fn add_direct(&mut self, to: C::Address, port: Port, rtt: Rtt) {
 		if self.connections.iter().any(|c| c.address == to) {
-			eprintln!("connection is already added: {to:?}");
+			warn!("connection is already added: {to:?}");
 			return;
 		}
 
@@ -337,7 +338,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 	let (opaque, data) = match C::decode_headers(input.message) {
 		Ok(v) => v,
 		Err(e) => {
-			eprintln!("malformed incoming packet: {e}");
+			warn!("malformed incoming packet: {e}");
 			return;
 		}
 	};
@@ -354,7 +355,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 				Via::Address(input.packet_source.clone()),
 				request_origin.clone(),
 			) {
-				eprintln!(
+				warn!(
 					"messages from {:?} should not be forwarded through {:?}",
 					request_origin, input.packet_source,
 				);
@@ -375,11 +376,11 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 			let inner = inner.write().expect("write");
 			let Some(forwarder) = inner.forwarder_for(request_origin.clone(), &HashSet::new())
 			else {
-				eprintln!("could not forward packet: {opaque:?}");
+				warn!("could not forward packet: {opaque:?}");
 				return;
 			};
 			if forwarder.sender.send(original_message).is_err() {
-				eprintln!("failed to forward");
+				warn!("failed to forward");
 			};
 		}
 		OpaquePacketWrapper::Request {
@@ -395,7 +396,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 				.set
 				.may_be_forwarder_for(Via::Address(input.packet_source.clone()), sender.clone())
 			{
-				eprintln!(
+				warn!(
 					"messages from {:?} should not be forwarded through {:?}",
 					sender, input.packet_source,
 				);
@@ -410,7 +411,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 					) = {
 						let read = inner.read().expect("read");
 						(
-							read.request_handler.get(request.as_str()).cloned(),
+							read.request_handler.get(request).cloned(),
 							// read.polling_request_handler.get(request.as_str()).cloned(),
 						)
 					};
@@ -427,7 +428,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 									.handle(sender.clone(), data, &response.rid, sender.clone())
 									.await;
 								if tx.send(response_msg.into()).is_err() {
-									eprintln!("failed to send response");
+									warn!("failed to send response");
 								};
 								inner
 									.write()
@@ -480,19 +481,19 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 										)
 										.is_err()
 									{
-										eprintln!("failed to send response");
+										warn!("failed to send response");
 									};
 									return;
 								}
 							};
 							if tx.send(response.into()).is_err() {
-								eprintln!("failed to send response");
+								warn!("failed to send response");
 							};
 						});
 					// TODO: timeout/cancel
 					} */
 					else {
-						eprintln!("no handler found for {request} request");
+						warn!("no handler found for {request} request");
 						if tx
 							.send(
 								C::encode_error_response(
@@ -505,7 +506,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 							)
 							.is_err()
 						{
-							eprintln!("failed to send response");
+							warn!("failed to send response");
 						};
 					}
 				} else {
@@ -515,7 +516,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 					) = {
 						let read = inner.read().expect("read");
 						(
-							read.notification_handler.get(request.as_str()).cloned(),
+							read.notification_handler.get(request).cloned(),
 							// read.polling_notification_handler
 							// 	.get(request.as_str())
 							// 	.cloned(),
@@ -529,7 +530,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 						});
 						if is_blocking {
 							if let Err(e) = task.await {
-								eprintln!("blocking notification handler failed: {e:?}");
+								warn!("blocking notification handler failed: {e:?}");
 							};
 						}
 					// TODO: timeout/cancel
@@ -543,12 +544,12 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 							})
 							.is_err()
 						{
-							eprintln!("polling notification listener dead");
+							warn!("polling notification listener dead");
 							return;
 						};
 					}*/
 					else {
-						eprintln!("no handler found for {request} notification")
+						warn!("no handler found for {request} notification")
 					}
 				}
 				return;
@@ -562,11 +563,11 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 						"could not forward message: no connection",
 					);
 				};
-				eprintln!("could not forward packet: {opaque:?}");
+				warn!("could not forward packet: {opaque:?}");
 				return;
 			};
 			if forwarder.sender.send(original_message.clone()).is_err() {
-				eprintln!("failed to forward");
+				warn!("failed to forward");
 			};
 		}
 	}
@@ -682,7 +683,7 @@ where
 						let inner = inner.read().expect("write");
 						let Some(forwarder) = inner.forwarder_for(out.to.clone(), &HashSet::new())
 						else {
-							eprintln!(
+							warn!(
 								"no path found: {:?} {:?}",
 								out.to.clone(),
 								inner.connections
@@ -690,7 +691,7 @@ where
 							continue;
 						};
 						if forwarder.sender.send(out.message).is_err() {
-							eprintln!("failed to forward");
+							warn!("failed to forward");
 							continue;
 						};
 					}
@@ -752,7 +753,6 @@ where
 						let mut addresses = Vec::new();
 						for connection in inner.connections.iter_mut() {
 							if added.to == connection.address {
-								eprint!("racy");
 								continue;
 							}
 							if added.via == Via::Address(connection.address.clone()) {
@@ -775,7 +775,6 @@ where
 						let mut addressed = Vec::new();
 						for connection in inner.connections.iter_mut() {
 							if removed.to == connection.address {
-								eprint!("racy");
 								continue;
 							}
 							if removed.via == Via::Address(connection.address.clone()) {
@@ -794,7 +793,7 @@ where
 					}
 				}
 			}
-			eprintln!("rpc worker finished")
+			warn!("rpc worker finished")
 		});
 		let abort = AbortOnDrop(join_handle.abort_handle());
 		let inner = Arc::new(RwLock::new(RpcInner {
@@ -825,10 +824,10 @@ where
 			move |source: C::Address, add: AddForwarded<C::Address>| {
 				let inner = inner.clone();
 				async move {
-					eprintln!("{source:?} added forwarded {add:?}");
+					warn!("{source:?} added forwarded {add:?}");
 					let mut inner = inner.write().expect("read");
 					if !inner.connections.iter().any(|c| c.address == source) {
-						eprintln!("connection is not direct: {source:?} -> {add:?}");
+						warn!("connection is not direct: {source:?} -> {add:?}");
 						return Ok(());
 					}
 					inner.set.inc(add.to, Via::Address(source), add.rtt);

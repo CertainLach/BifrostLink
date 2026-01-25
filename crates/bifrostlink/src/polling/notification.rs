@@ -89,12 +89,12 @@ impl<C: Config> RpcInner<C> {
 						let request: PollingNotification<R, C> = match req.into_typed() {
 							Ok(r) => r,
 							Err(e) => {
-								eprintln!("failed to decode notification: {e}\n{:?}", String::from_utf8_lossy(&r));
+								warn!("failed to decode notification: {e}\n{:?}", String::from_utf8_lossy(&r));
 								continue;
 							}
 						};
 						if let Err(SendError(_r)) = tx.send(request) {
-							eprintln!("notification handler dead inflight");
+							warn!("notification handler dead inflight");
 							break;
 						};
 						continue;

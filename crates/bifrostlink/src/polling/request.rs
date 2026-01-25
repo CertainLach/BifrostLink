@@ -30,7 +30,7 @@ impl<C: Config> OpaquePollingRequest<C> {
 		match self.respond.take().expect("didn't responded yet").send(out) {
 			Ok(()) => {}
 			Err(_) => {
-				eprintln!("failed to respond")
+				warn!("failed to respond")
 			}
 		}
 	}
