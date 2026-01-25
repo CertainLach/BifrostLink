@@ -20,6 +20,7 @@ use crate::{
 	AddressT, Config, ConfigExt, IncomingNotification, IncomingRequest, Notification,
 	OutgoingNotification, OutgoingRequest, Port,
 };
+use async_fn_traits::AsyncFn2;
 use async_trait::async_trait;
 use futures::Future;
 use serde::Serialize;
@@ -134,10 +135,20 @@ impl<C: Config> RpcInner<C> {
 				};
 				match (self.handler)(packet_source, request).await {
 					Ok(response) => {
-						return C::encode_response(rid.to_owned(), self.me.clone(), respond_to, response);
+						return C::encode_response(
+							rid.to_owned(),
+							self.me.clone(),
+							respond_to,
+							response,
+						);
 					}
 					Err(e) => {
-						return C::encode_error_response(rid.to_owned(), self.me.clone(), respond_to, e.into().0)
+						return C::encode_error_response(
+							rid.to_owned(),
+							self.me.clone(),
+							respond_to,
+							e.into().0,
+						)
 					}
 				}
 			}
@@ -156,13 +167,13 @@ impl<C: Config> RpcInner<C> {
 	fn register_notification_handler<
 		'r,
 		R: Notification + 'static,
-		H: AsyncFn(C::Address, R) -> Result<(), C::Error> + Sync + Send + 'static,
+		H: AsyncFn2<C::Address, R, Output = Result<(), C::Error>> + Sync + Send + 'static,
 	>(
 		&mut self,
 		handler: H,
 		blocking: bool,
 	) where
-		for<'a> H::CallRefFuture<'a>: Send,
+		for<'a> H::OutputFuture: Send,
 	{
 		struct CallbackNotificationHandler<C: Config, R, H> {
 			blocking: bool,
@@ -170,12 +181,15 @@ impl<C: Config> RpcInner<C> {
 			_marker: PhantomData<fn(R, C)>,
 		}
 		#[async_trait]
-		impl<R, H: AsyncFn(C::Address, R) -> Result<(), C::Error> + Sync + Send + 'static, C>
-			NotificationHandler<C> for CallbackNotificationHandler<C, R, H>
+		impl<
+				R,
+				H: AsyncFn2<C::Address, R, Output = Result<(), C::Error>> + Sync + Send + 'static,
+				C,
+			> NotificationHandler<C> for CallbackNotificationHandler<C, R, H>
 		where
 			C: Config,
 			R: Notification + 'static,
-			for<'a> H::CallRefFuture<'a>: Send,
+			for<'a> H::OutputFuture: Send,
 		{
 			fn blocking(&self) -> bool {
 				self.blocking
@@ -613,12 +627,12 @@ where
 	}
 	pub fn register_notification_handler<
 		R: IncomingNotification + 'static,
-		H: AsyncFn(C::Address, R) -> Result<(), C::Error> + Sync + Send + 'static,
+		H: AsyncFn2<C::Address, R, Output = Result<(), C::Error>> + Sync + Send + 'static,
 	>(
 		&self,
 		handler: H,
 	) where
-		for<'a> H::CallRefFuture<'a>: 'static + Send,
+		for<'a> H::OutputFuture: 'static + Send,
 	{
 		let mut inner = self.inner.write().expect("write");
 		inner.register_notification_handler(handler, false)
@@ -628,12 +642,12 @@ where
 	/// processed in parallel, and executed very fast
 	pub fn register_blocking_notification_handler<
 		R: IncomingNotification + 'static,
-		H: AsyncFn(C::Address, R) -> Result<(), C::Error> + Sync + Send + 'static,
+		H: AsyncFn2<C::Address, R, Output = Result<(), C::Error>> + Sync + Send + 'static,
 	>(
 		&self,
 		handler: H,
 	) where
-		for<'a> H::CallRefFuture<'a>: Send,
+		for<'a> H::OutputFuture: Send,
 	{
 		let mut inner = self.inner.write().expect("write");
 		inner.register_notification_handler(handler, true)
@@ -808,28 +822,32 @@ where
 
 		rpc.register_blocking_notification_handler({
 			let inner = inner.clone();
-			async move |source: C::Address, add: AddForwarded<C::Address>| {
-				eprintln!("{source:?} added forwarded {add:?}");
+			move |source: C::Address, add: AddForwarded<C::Address>| {
 				let inner = inner.clone();
-				let mut inner = inner.write().expect("read");
-				if !inner.connections.iter().any(|c| c.address == source) {
-					eprintln!("connection is not direct: {source:?} -> {add:?}");
-					return Ok(());
+				async move {
+					eprintln!("{source:?} added forwarded {add:?}");
+					let mut inner = inner.write().expect("read");
+					if !inner.connections.iter().any(|c| c.address == source) {
+						eprintln!("connection is not direct: {source:?} -> {add:?}");
+						return Ok(());
+					}
+					inner.set.inc(add.to, Via::Address(source), add.rtt);
+					Ok(())
 				}
-				inner.set.inc(add.to, Via::Address(source), add.rtt);
-				Ok(())
 			}
 		});
 		rpc.register_blocking_notification_handler({
 			let inner = inner.clone();
-			async move |source: C::Address, cancel: CancelRequest| {
+			move |source: C::Address, cancel: CancelRequest| {
 				let inner = inner.clone();
-				let mut inner = inner.write().expect("write");
-				if let Some(handle) = inner.running_requests.remove(&(source, cancel.rid)) {
-					handle.abort();
-				}
+				async move {
+					let mut inner = inner.write().expect("write");
+					if let Some(handle) = inner.running_requests.remove(&(source, cancel.rid)) {
+						handle.abort();
+					}
 
-				Ok(())
+					Ok(())
+				}
 			}
 		});
 

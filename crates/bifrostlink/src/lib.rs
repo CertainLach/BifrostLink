@@ -1,4 +1,4 @@
-#![feature(try_blocks, async_fn_traits)]
+#![feature(try_blocks)]
 
 mod port;
 use std::{fmt, hash::Hash};

@@ -21,6 +21,7 @@ tokio = { version = "1.33.0", features = [
 	"sync",
 	"macros",
 ] }
+async_fn_traits = "0.1.1"
 
 [features]
 polling = []
