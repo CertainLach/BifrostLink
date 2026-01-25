@@ -2,7 +2,6 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::ops::AsyncFn;
 use std::sync::{Arc, RwLock, Weak};
 
 use crate::callback::notification::NotificationHandler;

@@ -1,13 +1,14 @@
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read, Write};
+use std::pin::pin;
 use std::process::Stdio;
 
 use bifrostlink::Port;
-use bytes::BytesMut;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use tokio::process::Command;
+use bytes::{Bytes, BytesMut};
+use tokio::io::{AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::process::{ChildStdin, ChildStdout, Command};
 use tokio::task::spawn_blocking;
 use tokio::{join, spawn};
-use tracing::error;
+use tracing::{debug, error};
 
 #[cfg(target_os = "windows")]
 #[link(name = "msvcrt")]
@@ -38,6 +39,46 @@ fn set_mode(fd: i32, mode: i32) -> ResetMode {
 	ResetMode { fd, mode: old_mode }
 }
 
+fn write_bytes_sync<W: Write>(mut stdin: W, msg: Bytes) -> io::Result<()> {
+	let len = u32::try_from(msg.len()).map_err(|_| {
+		io::Error::new(
+			io::ErrorKind::InvalidInput,
+			"message shouldn't be larger than 4GB",
+		)
+	})?;
+	let len = u32::to_be_bytes(len);
+	stdin.write_all(&len)?;
+	Ok(())
+}
+async fn write_bytes<W: AsyncWrite>(stdin: W, msg: Bytes) -> io::Result<()> {
+	let mut stdin = pin!(stdin);
+	let len = u32::try_from(msg.len()).map_err(|_| {
+		io::Error::new(
+			io::ErrorKind::InvalidInput,
+			"message shouldn't be larger than 4GB",
+		)
+	})?;
+	let len = u32::to_be_bytes(len);
+	stdin.write_all(&len).await?;
+	Ok(())
+}
+fn read_bytes_sync<R: Read>(mut stdout: R) -> io::Result<BytesMut> {
+	let mut size = [0; 4];
+	stdout.read_exact(&mut size)?;
+	let size = u32::from_ne_bytes(size) as usize;
+	let mut buf = BytesMut::zeroed(size);
+	stdout.read_exact(&mut buf)?;
+	Ok(buf)
+}
+async fn read_bytes(stdout: &mut ChildStdout) -> io::Result<BytesMut> {
+	let mut size = [0; 4];
+	stdout.read_exact(&mut size).await?;
+	let size = u32::from_ne_bytes(size) as usize;
+	let mut buf = BytesMut::zeroed(size);
+	stdout.read_exact(&mut buf).await?;
+	Ok(buf)
+}
+
 /// Run if this process is intended to be started as native messaging plugin.
 /// stdin/stdout will be unusable after performing this call.
 pub fn native_messaging_port() -> Port {
@@ -48,14 +89,7 @@ pub fn native_messaging_port() -> Port {
 			let _stdout_guard = set_mode(0, 0x8000);
 
 			while let Some(out) = rx.blocking_recv() {
-				let len = u32::try_from(out.len()).expect("can't be larger");
-				let succeeded: io::Result<()> = try {
-					let size = u32::to_ne_bytes(len);
-					stdout.write_all(&size)?;
-					stdout.write_all(&out)?;
-					stdout.flush()?;
-				};
-				if let Err(e) = succeeded {
+				if let Err(e) = write_bytes_sync(&mut stdout, out) {
 					error!("stdout write failed: {e}");
 					break;
 				}
@@ -68,20 +102,17 @@ pub fn native_messaging_port() -> Port {
 			let _stdin_guard = set_mode(1, 0x8000);
 
 			loop {
-				let succeeded: io::Result<()> = try {
-					let mut size = [0; 4];
-					stdin.read_exact(&mut size)?;
-					let size = u32::from_ne_bytes(size) as usize;
-					let mut buf = BytesMut::zeroed(size);
-					stdin.read_exact(&mut buf)?;
-					if tx.send(buf.freeze()).is_err() {
+				match read_bytes_sync(&mut stdin) {
+					Ok(buf) => {
+						if tx.send(buf.freeze()).is_err() {
+							break;
+						}
+					}
+					Err(e) => {
+						error!("stdin read failed: {e}");
 						break;
 					}
-				};
-				if let Err(e) = succeeded {
-					error!("stdin read failed: {e}");
-					break;
-				};
+				}
 			}
 			error!("input stream end");
 		});
@@ -104,41 +135,28 @@ pub async fn start_native_messaging_extension(mut cmd: Command) -> io::Result<Po
 	Ok(Port::new(|mut rx, tx| async move {
 		let stdin_printer = spawn(async move {
 			while let Some(msg) = rx.recv().await {
-				let succeeded: io::Result<()> = try {
-					let len = u32::try_from(msg.len()).map_err(|_| {
-						io::Error::new(
-							io::ErrorKind::InvalidInput,
-							"message shouldn't be larger than 4GB",
-						)
-					})?;
-					let len = u32::to_be_bytes(len);
-					stdin.write_all(&len).await?;
-				};
-				if let Err(e) = succeeded {
+				if let Err(e) = write_bytes(&mut stdin, msg).await {
 					error!("stdin write failed: {e}");
 					break;
 				};
 			}
-			eprintln!("output stream end");
+			debug!("output stream end");
 		});
 		let stdout_reader = spawn(async move {
 			loop {
-				let succeeded: io::Result<()> = try {
-					let mut size = [0; 4];
-					stdout.read_exact(&mut size).await?;
-					let size = u32::from_ne_bytes(size) as usize;
-					let mut buf = BytesMut::zeroed(size);
-					stdout.read_exact(&mut buf).await?;
-					if tx.send(buf.freeze()).is_err() {
+				match read_bytes(&mut stdout).await {
+					Ok(buf) => {
+						if tx.send(buf.freeze()).is_err() {
+							break;
+						}
+					}
+					Err(e) => {
+						error!("stdout read failed: {e}");
 						break;
 					}
-				};
-				if let Err(e) = succeeded {
-					error!("stdout read failed: {e}");
-					break;
-				};
+				}
 			}
-			eprintln!("input stream end");
+			debug!("input stream end");
 		});
 
 		// TODO: select!

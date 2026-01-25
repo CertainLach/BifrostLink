@@ -1,10 +1,8 @@
-#![feature(try_blocks)]
-
 mod port;
 use std::{fmt, hash::Hash};
 
 use bytes::Bytes;
-pub use port::{native_messaging_port, start_native_messaging_extension, Port};
+pub use port::Port;
 mod util;
 use serde::{de::DeserializeOwned, Serialize};
 mod connection;
