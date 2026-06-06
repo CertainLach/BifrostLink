@@ -132,8 +132,8 @@ fn expand(ns: u16, item: ItemImpl) -> syn::Result<TokenStream> {
 				#( #field_idents: #field_types ),*
 			) -> Result<#ret_ty, C::Error> {
 				Ok(self
-					.0
-					.request(self.1.clone(), #request_ident { #( #field_idents ),* })
+					.remote
+					.request(#request_ident { #( #field_idents ),* })
 					.await?
 					.0)
 			}
@@ -161,9 +161,23 @@ fn expand(ns: u16, item: ItemImpl) -> syn::Result<TokenStream> {
 			}
 		}
 
-		pub struct #client_ident<C: ::bifrostlink::Config>(pub ::bifrostlink::Rpc<C>, pub C::Address);
+		pub struct #client_ident<C: ::bifrostlink::Config>{
+			remote: ::bifrostlink::Remote<C>,
+		}
 		impl<C: ::bifrostlink::Config> #client_ident<C> {
 			#( #client_methods )*
+		}
+		impl<C: ::bifrostlink::Config> ::bifrostlink::declarative::RemoteEndpoints<C> for #client_ident<C> {
+			fn wrap(remote: ::bifrostlink::Remote<C>) -> Self {
+				Self { remote }
+			}
+		}
+		impl<C: ::bifrostlink::Config> Clone for #client_ident<C> {
+			fn clone(&self) -> Self {
+				Self {
+					remote: self.remote.clone(),
+				}
+			}
 		}
 	})
 }

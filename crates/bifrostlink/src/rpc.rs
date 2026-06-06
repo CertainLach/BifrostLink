@@ -591,6 +591,41 @@ impl<C: Config> WeakRpc<C> {
 	}
 }
 
+pub struct Remote<C: Config> {
+	rpc: Rpc<C>,
+	address: C::Address,
+}
+impl<C: Config> Remote<C> {
+	pub async fn request<T: OutgoingRequest + Serialize>(
+		&self,
+		request: T,
+	) -> Result<T::Response, C::Error>
+	where
+		T::Response: DeserializeOwned,
+	{
+		self.rpc.request(self.address.clone(), request).await
+	}
+	pub async fn wait_for_connection(&self) -> Result<(), WaitError> {
+		self.rpc.wait_for_connection_to(self.address.clone()).await
+	}
+	pub fn notify<T: OutgoingNotification>(&self, notification: &T) {
+		self.rpc.notify(self.address.clone(), notification);
+	}
+
+	pub fn rpc(&self) -> Rpc<C> {
+		self.rpc.clone()
+	}
+}
+
+impl<C: Config> Clone for Remote<C> {
+	fn clone(&self) -> Self {
+		Self {
+			rpc: self.rpc.clone(),
+			address: self.address.clone(),
+		}
+	}
+}
+
 pub struct Rpc<C: Config> {
 	pub(crate) inner: Arc<RwLock<RpcInner<C>>>,
 }
@@ -904,6 +939,13 @@ where
 				Ok(_) => {}
 				Err(_) => return Err(WaitError),
 			}
+		}
+	}
+
+	pub fn remote(&self, address: C::Address) -> Remote<C> {
+		Remote {
+			rpc: self.clone(),
+			address,
 		}
 	}
 }

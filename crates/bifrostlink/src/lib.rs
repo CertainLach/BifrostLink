@@ -28,7 +28,7 @@ pub(crate) mod callback;
 // pub use polling::request::PollingRequest;
 
 mod rpc;
-pub use rpc::{Rpc, WeakRpc};
+pub use rpc::{Remote, Rpc, WeakRpc};
 
 pub mod error;
 
