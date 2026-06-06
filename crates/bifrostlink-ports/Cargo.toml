@@ -2,7 +2,14 @@
 name = "bifrostlink-ports"
 description = "Transports for bifrostlink"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/bifrostlink-ports"
+keywords = ["rpc", "async", "transport", "tokio", "networking"]
+categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 bifrostlink.workspace = true

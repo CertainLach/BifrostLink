@@ -2,7 +2,14 @@
 name = "bifrostlink-macros"
 description = "Codegen helper for bifrostlink"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/bifrostlink-macros"
+keywords = ["rpc", "macros", "codegen", "proc-macro"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [dependencies]
 proc-macro2.workspace = true
