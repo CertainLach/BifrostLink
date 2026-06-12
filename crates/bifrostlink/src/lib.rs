@@ -20,6 +20,9 @@ pub use notification::{IncomingNotification, Notification, OutgoingNotification}
 mod request;
 pub use request::{IncomingRequest, OutgoingRequest, Request};
 
+mod resource;
+pub use resource::{Resource, ResourceId};
+
 mod internal_handlers;
 
 pub(crate) mod callback;

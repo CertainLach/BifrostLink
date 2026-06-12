@@ -1,6 +1,7 @@
 use crate::{
 	connection::{ConnectionEnding, ConnectionMessage},
 	packet::OutgoingMessage,
+	resource::RegisterResources,
 	route::{
 		ConnectionAdded, ConnectionRemoved, MinRttUpdated, ViaListSeconded, ViaListUnseconded,
 	},
@@ -11,6 +12,8 @@ pub enum RootEvent<Address> {
 	ConnectionEnding(ConnectionEnding<Address>),
 
 	OutgoingMessage(OutgoingMessage<Address>),
+
+	RegisterResources(RegisterResources<Address>),
 
 	MinRttUpdated(MinRttUpdated<Address>),
 	ViaListSeconded(ViaListSeconded<Address>),
@@ -32,6 +35,7 @@ fr!(
 	ConnectionMessage,
 	ConnectionEnding,
 	OutgoingMessage,
+	RegisterResources,
 	MinRttUpdated,
 	ViaListSeconded,
 	ViaListUnseconded,

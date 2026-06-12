@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-	notification, packet::RequestId, route::{MinRttUpdated, Rtt, Via}, AddressT
+	notification,
+	packet::RequestId,
+	resource::ResourceId,
+	route::{MinRttUpdated, Rtt, Via},
+	AddressT,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -57,3 +61,9 @@ pub struct CancelRequest {
 	pub(crate) rid: RequestId,
 }
 notification!((0x0004) CancelRequest);
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct ResourceDropped {
+	pub(crate) id: ResourceId,
+}
+notification!((0x0005) ResourceDropped);

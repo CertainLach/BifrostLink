@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "bifrostlink"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "async_fn_traits",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "bifrostlink-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "bifrostlink-ports"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bifrostlink",
  "bytes",

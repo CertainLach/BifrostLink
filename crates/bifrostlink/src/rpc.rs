@@ -9,8 +9,9 @@ use crate::callback::request::RequestHandler;
 use crate::connection::{Connection, ConnectionMessage};
 use crate::error::{ErrorT, ListenerForYourRequestHasBeenDeadError, ResponseError};
 use crate::event::RootEvent;
-use crate::internal_handlers::{AddForwarded, CancelRequest, RemoveForwarded};
+use crate::internal_handlers::{AddForwarded, CancelRequest, RemoveForwarded, ResourceDropped};
 use crate::packet::{OpaquePacketWrapper, OutgoingMessage, RequestId};
+use crate::resource::{self, Cleanup, ResourceId};
 // use crate::polling::notification::OpaquePollingNotification;
 // use crate::polling::request::OpaquePollingRequest;
 use crate::route::{RouteSet, Rtt, Via};
@@ -52,6 +53,9 @@ pub(crate) struct RpcInner<C: Config> {
 	responses: HashMap<(C::Address, RequestId), oneshot::Sender<Result<C::EncodedData, C::Error>>>,
 
 	last_request_id: HashMap<C::Address, usize>,
+
+	/// C::Address is kept so we can drop resources on peer disconnection.
+	resources: HashMap<ResourceId, (C::Address, Cleanup)>,
 }
 
 pub struct CancelRequestGuard<C: Config> {
@@ -98,6 +102,7 @@ impl<C: Config> RpcInner<C> {
 	{
 		struct CallbackRequestHandler<C: Config, R, H> {
 			me: C::Address,
+			tx: Sender<RootEvent<C::Address>>,
 			handler: Box<H>,
 			cancellable: bool,
 			_marker: PhantomData<fn(C, R)>,
@@ -123,7 +128,12 @@ impl<C: Config> RpcInner<C> {
 				rid: &RequestId,
 				respond_to: C::Address,
 			) -> OutgoingMessage<C::Address> {
-				let request = match C::decode_data(request) {
+				let make = resource::drop_notifier::<C>(
+					self.me.clone(),
+					packet_source.clone(),
+					self.tx.clone(),
+				);
+				let request = match resource::with_decode(make, || C::decode_data(request)) {
 					Ok(v) => v,
 					Err(e) => {
 						return C::encode_error_response(
@@ -136,12 +146,16 @@ impl<C: Config> RpcInner<C> {
 				};
 				match (self.handler)(packet_source, request).await {
 					Ok(response) => {
-						return C::encode_response(
-							rid.to_owned(),
-							self.me.clone(),
-							respond_to,
-							response,
-						);
+						let (msg, parked) = resource::with_encode(|| {
+							C::encode_response(
+								rid.to_owned(),
+								self.me.clone(),
+								respond_to.clone(),
+								response,
+							)
+						});
+						resource::register_parked(&self.tx, respond_to, parked);
+						return msg;
 					}
 					Err(e) => {
 						return C::encode_error_response(
@@ -160,6 +174,7 @@ impl<C: Config> RpcInner<C> {
 			Entry::Vacant(v) => v.insert(Arc::new(CallbackRequestHandler {
 				handler: Box::new(handler),
 				me: self.me.clone(),
+				tx: self.tx.clone(),
 				cancellable,
 				_marker: PhantomData,
 			})),
@@ -178,6 +193,8 @@ impl<C: Config> RpcInner<C> {
 	{
 		struct CallbackNotificationHandler<C: Config, R, H> {
 			blocking: bool,
+			me: C::Address,
+			tx: Sender<RootEvent<C::Address>>,
 			handler: Box<H>,
 			_marker: PhantomData<fn(R, C)>,
 		}
@@ -196,7 +213,12 @@ impl<C: Config> RpcInner<C> {
 				self.blocking
 			}
 			async fn handle(&self, packet_source: C::Address, request: C::EncodedData) {
-				let request = match C::decode_data::<R>(request) {
+				let make = resource::drop_notifier::<C>(
+					self.me.clone(),
+					packet_source.clone(),
+					self.tx.clone(),
+				);
+				let request = match resource::with_decode(make, || C::decode_data::<R>(request)) {
 					Ok(v) => v,
 					Err(e) => {
 						warn!("failed to parse notification: {e}");
@@ -217,6 +239,8 @@ impl<C: Config> RpcInner<C> {
 			Entry::Occupied(_) => panic!("request handler is already defined"),
 			Entry::Vacant(v) => v.insert(Arc::new(CallbackNotificationHandler::<C, _, _> {
 				blocking,
+				me: self.me.clone(),
+				tx: self.tx.clone(),
 				handler: Box::new(handler),
 				_marker: PhantomData,
 			})),
@@ -247,9 +271,13 @@ impl<C: Config> RpcInner<C> {
 			.find(|connection| connection.address == target)
 	}
 	fn notify<T: OutgoingNotification>(&self, to: C::Address, notification: T) {
-		self.tx
-			.send(C::encode_notification(self.me.clone(), to, notification).into())
-			.expect("not closed");
+		let (msg, parked) = resource::with_encode(|| {
+			C::encode_notification(self.me.clone(), to.clone(), notification)
+		});
+		// Register before the message so a returning ResourceDropped can never
+		// race ahead of the registration (same event channel, FIFO).
+		resource::register_parked(&self.tx, to, parked);
+		self.tx.send(msg.into()).expect("not closed");
 	}
 
 	pub fn complete_response(
@@ -288,9 +316,13 @@ impl<C: Config> RpcInner<C> {
 		let (complete, pending) = oneshot::channel();
 		// TODO: If request target is dead, all the responses for it should be dropped.
 		self.responses.insert((to.clone(), id.clone()), complete);
-		self.tx
-			.send(C::encode_request(self.me.clone(), to.clone(), id.clone(), request).into())
-			.expect("not closed");
+		let (msg, parked) = resource::with_encode(|| {
+			C::encode_request(self.me.clone(), to.clone(), id.clone(), request)
+		});
+		for (resource_id, cleanup) in parked {
+			self.resources.insert(resource_id, (to.clone(), cleanup));
+		}
+		self.tx.send(msg.into()).expect("not closed");
 		(
 			pending,
 			CancelRequestGuard {
@@ -356,7 +388,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 				request_origin.clone(),
 			) {
 				warn!(
-					"messages from {:?} should not be forwarded through {:?}",
+					"messages from {:?} can't be forwarded through {:?}",
 					request_origin, input.packet_source,
 				);
 				return;
@@ -397,7 +429,7 @@ async fn handle_connection_message<C: Config>(inner: Rpc<C>, input: ConnectionMe
 				.may_be_forwarder_for(Via::Address(input.packet_source.clone()), sender.clone())
 			{
 				warn!(
-					"messages from {:?} should not be forwarded through {:?}",
+					"messages from {:?} can't be forwarded through {:?}",
 					sender, input.packet_source,
 				);
 				return;
@@ -642,6 +674,10 @@ impl<C: Config> Rpc<C> {
 			inner: Arc::downgrade(&self.inner),
 		}
 	}
+	/// This node's own address.
+	pub fn me(&self) -> C::Address {
+		self.inner.read().expect("read").me.clone()
+	}
 }
 
 impl<C: Config> Rpc<C>
@@ -712,6 +748,13 @@ where
 					RootEvent::ConnectionEnding(ending) => {
 						let mut inner = inner.write().expect("write");
 						inner.remove_direct(ending.from)
+					}
+
+					RootEvent::RegisterResources(reg) => {
+						let mut inner = inner.write().expect("write");
+						for (id, cleanup) in reg.items {
+							inner.resources.insert(id, (reg.holder.clone(), cleanup));
+						}
 					}
 
 					RootEvent::OutgoingMessage(out) => {
@@ -806,6 +849,21 @@ where
 						}
 					}
 					RootEvent::ConnectionRemoved(removed) => {
+						let cleanups: Vec<Cleanup> = {
+							let mut inner = inner.write().expect("write");
+							let dead: Vec<ResourceId> = inner
+								.resources
+								.iter()
+								.filter(|(_, (holder, _))| *holder == removed.to)
+								.map(|(id, _)| *id)
+								.collect();
+							dead.into_iter()
+								.filter_map(|id| inner.resources.remove(&id).map(|(_, c)| c))
+								.collect()
+						};
+						for cleanup in cleanups {
+							cleanup();
+						}
 						let mut inner = inner.write().expect("write");
 						let mut addressed = Vec::new();
 						for connection in inner.connections.iter_mut() {
@@ -845,6 +903,7 @@ where
 			responses: Default::default(),
 			connect_tx: connection_tx2,
 			last_request_id: Default::default(),
+			resources: Default::default(),
 		}));
 		set_pending
 			.send(inner.clone())
@@ -885,6 +944,31 @@ where
 			}
 		});
 
+		rpc.register_blocking_notification_handler({
+			let inner = inner.clone();
+			move |source: C::Address, dropped: ResourceDropped| {
+				let inner = inner.clone();
+				async move {
+					let cleanup = {
+						let mut inner = inner.write().expect("write");
+						match inner.resources.remove(&dropped.id) {
+							Some((holder, cleanup)) if holder == source => Some(cleanup),
+							Some((holder, cleanup)) => {
+								inner.resources.insert(dropped.id, (holder, cleanup));
+								warn!("ResourceDropped from non-holder {source:?}");
+								None
+							}
+							None => None,
+						}
+					};
+					if let Some(cleanup) = cleanup {
+						cleanup();
+					}
+					Ok(())
+				}
+			}
+		});
+
 		rpc
 	}
 	pub fn remove_direct(&self, to: C::Address) {
@@ -908,18 +992,23 @@ where
 	where
 		T::Response: DeserializeOwned,
 	{
-		let (ch, _cancel_guard) = {
+		let (ch, _cancel_guard, me, tx) = {
 			let mut inner = self.inner.write().expect("read");
-			inner.request(to, request)
+			let me = inner.me.clone();
+			let tx = inner.tx.clone();
+			let (ch, guard) = inner.request(to.clone(), request);
+			(ch, guard, me, tx)
 		};
 		let res = ch.await;
 		match res {
-			Ok(Ok(v)) => match C::decode_data(v) {
-				Ok(v) => Ok(v),
-				Err(e) => Err(e),
-			},
+			Ok(Ok(v)) => {
+				let make = resource::drop_notifier::<C>(me, to, tx);
+				match resource::with_decode(make, || C::decode_data(v)) {
+					Ok(v) => Ok(v),
+					Err(e) => Err(e),
+				}
+			}
 			Ok(Err(e)) => Err(e),
-			// Request was dropped for some reason.
 			Err(_) => Err(From::from(ListenerForYourRequestHasBeenDeadError)),
 		}
 	}
