@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 authors = ["Lach <iam@lach.pw>"]
@@ -14,9 +14,9 @@ keywords = ["rpc", "async", "topology", "tokio", "networking"]
 categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
-bifrostlink = { version = "0.2.1", path = "crates/bifrostlink" }
-bifrostlink-macros = { version = "0.2.1", path = "crates/bifrostlink-macros" }
-bifrostlink-ports = { version = "0.2.1", path = "crates/bifrostlink-ports" }
+bifrostlink = { version = "0.2.2", path = "crates/bifrostlink" }
+bifrostlink-macros = { version = "0.2.2", path = "crates/bifrostlink-macros" }
+bifrostlink-ports = { version = "0.2.2", path = "crates/bifrostlink-ports" }
 
 async-trait = "0.1.77"
 async_fn_traits = "0.1.1"
