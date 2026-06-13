@@ -30,7 +30,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender as Sender;
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::AbortHandle;
-use tracing::warn;
+use tracing::{debug, warn};
 
 pub(crate) struct RpcInner<C: Config> {
 	me: C::Address,
@@ -918,10 +918,10 @@ where
 			move |source: C::Address, add: AddForwarded<C::Address>| {
 				let inner = inner.clone();
 				async move {
-					warn!("{source:?} added forwarded {add:?}");
+					debug!("{source:?} added forwarded {add:?}");
 					let mut inner = inner.write().expect("read");
 					if !inner.connections.iter().any(|c| c.address == source) {
-						warn!("connection is not direct: {source:?} -> {add:?}");
+						debug!("connection is not direct: {source:?} -> {add:?}");
 						return Ok(());
 					}
 					inner.set.inc(add.to, Via::Address(source), add.rtt);
